@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>悦悦画廊 - 管理后台</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Comic+Neue:wght@300;400;700&display=swap" rel="stylesheet">
+</head>
+<body class="admin-body">
+    <header class="header">
+        <div class="header-content">
+            <h1 class="title">悦悦画廊 - 管理后台</h1>
+            <a href="index.html" class="back-btn">返回画廊</a>
+        </div>
+    </header>
+
+    <main class="admin-main">
+        <div class="upload-section">
+            <h2>上传新画作</h2>
+            <form id="upload-form" class="upload-form">
+                <div class="form-group">
+                    <label for="painting-file">选择悦悦的画作：</label>
+                    <div class="file-upload-area">
+                        <input type="file" id="painting-file" name="painting" accept="image/*" required>
+                        <div class="upload-text">
+                            <p>📸 点击选择图片或拖拽到这里</p>
+                            <span>支持 JPG、PNG 格式，最大 5MB</span>
+                        </div>
+                    </div>
+                    <div class="preview-container">
+                        <img id="preview-image" class="preview-image hidden" alt="预览图">
+                    </div>
+                </div>
+                <button type="submit" class="submit-btn">上传画作</button>
+            </form>
+        </div>
+
+        <div class="manage-section">
+            <h2>已上传的画作</h2>
+            <div id="painting-list" class="painting-list">
+                <!-- 画作列表会动态加载到这里 -->
+            </div>
+        </div>
+    </main>
+
+    <script src="js/admin.js"></script>
+</body>
+</html>
