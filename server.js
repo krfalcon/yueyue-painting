@@ -3,6 +3,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
+const sharp = require('sharp');
+const heicConvert = require('heic-convert');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,6 +17,7 @@ const ensureDirectoryExists = (dir) => {
 };
 
 ensureDirectoryExists('./uploads');
+ensureDirectoryExists('./uploads/temp');
 ensureDirectoryExists('./data');
 ensureDirectoryExists('./public/images');
 
@@ -58,25 +61,100 @@ const storage = multer.diskStorage({
         cb(null, 'uploads/');
     },
     filename: function (req, file, cb) {
+        // 为 HEIF 文件生成临时文件名，稍后会转换为 JPEG
         const uniqueName = uuidv4() + path.extname(file.originalname);
         cb(null, uniqueName);
     }
 });
 
+// HEIF/HEIC 文件类型检测 - 主要基于文件扩展名
+function isHeifFile(filename, mimetype) {
+    const ext = path.extname(filename).toLowerCase();
+    const isHeifExt = ext === '.heic' || ext === '.heif';
+    const isHeifMime = mimetype && (
+        mimetype === 'image/heic' || 
+        mimetype === 'image/heif' ||
+        mimetype === 'image/x-heic' ||
+        mimetype === 'image/x-heif'
+    );
+    
+    return isHeifExt || isHeifMime;
+}
+
 const upload = multer({
     storage: storage,
     limits: {
-        fileSize: 5 * 1024 * 1024 // 5MB 限制
+        fileSize: 10 * 1024 * 1024 // 增加到 10MB 以支持 HEIF 文件
     },
     fileFilter: function (req, file, cb) {
-        // 检查文件类型
-        if (file.mimetype.startsWith('image/')) {
+        // 检查文件类型 - 支持标准图片格式和 HEIF/HEIC
+        const ext = path.extname(file.originalname).toLowerCase();
+        const isImageMime = file.mimetype.startsWith('image/');
+        const isHeicFile = ext === '.heic' || ext === '.heif';
+        
+        console.log(`上传文件: ${file.originalname} (${file.mimetype})`);
+        
+        if (isImageMime || isHeicFile) {
             cb(null, true);
         } else {
+            console.log('❌ 文件类型不支持');
             cb(new Error('只允许上传图片文件！'), false);
         }
     }
 });
+
+// HEIF 转换为 JPEG 的函数
+async function convertHeifToJpeg(inputPath, outputPath, isHeifFile = false) {
+    try {
+        const inputBuffer = fs.readFileSync(inputPath);
+        
+        // 检测文件是否为 HEIF 格式
+        const ext = path.extname(inputPath).toLowerCase();
+        if (isHeifFile || ext === '.heic' || ext === '.heif') {
+            console.log(`转换 HEIF 文件: ${path.basename(inputPath)}`);
+            
+            // 使用 heic-convert 转换为 JPEG
+            const outputBuffer = await heicConvert({
+                buffer: inputBuffer,
+                format: 'JPEG',
+                quality: 0.9
+            });
+            
+            // 使用 Sharp 进一步优化和调整大小
+            await sharp(outputBuffer)
+                .jpeg({ 
+                    quality: 85,
+                    progressive: true 
+                })
+                .resize(2048, 2048, { 
+                    fit: 'inside',
+                    withoutEnlargement: true 
+                })
+                .toFile(outputPath);
+                
+            console.log(`HEIF 转换完成: ${path.basename(outputPath)}`);
+            return true;
+        } else {
+            // 对于其他格式，使用 Sharp 优化
+            await sharp(inputPath)
+                .jpeg({ 
+                    quality: 85,
+                    progressive: true 
+                })
+                .resize(2048, 2048, { 
+                    fit: 'inside',
+                    withoutEnlargement: true 
+                })
+                .toFile(outputPath);
+                
+            console.log(`图片优化完成: ${path.basename(outputPath)}`);
+            return true;
+        }
+    } catch (error) {
+        console.error('图片转换出错:', error);
+        return false;
+    }
+}
 
 // 路由处理
 
@@ -94,20 +172,84 @@ app.get('/api/paintings', (req, res) => {
 });
 
 // 上传新画作
-app.post('/api/upload', upload.single('painting'), (req, res) => {
+app.post('/api/upload', upload.single('painting'), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: '请选择要上传的图片文件' });
         }
 
+        const originalPath = req.file.path;
+        const originalExt = path.extname(req.file.filename).toLowerCase();
+        let finalFilename = req.file.filename;
+        let finalPath = originalPath;
+        
+        // 简化的 HEIC 检测 - 直接检查文件扩展名
+        const originalNameExt = path.extname(req.file.originalname).toLowerCase();
+        const isHeicFile = originalNameExt === '.heic' || originalNameExt === '.heif' || 
+                          originalExt === '.heic' || originalExt === '.heif';
+        
+        console.log(`处理文件: ${req.file.originalname}, HEIC: ${isHeicFile}`);
+        
+        // 如果是 HEIC 文件，必须转换为 JPEG
+        if (isHeicFile) {
+            
+            console.log(`处理 HEIF 文件: ${req.file.originalname}`);
+            
+            // 生成新的 JPEG 文件名，确保替换大小写不敏感的扩展名
+            const baseFilename = path.basename(req.file.filename, path.extname(req.file.filename));
+            const jpegFilename = baseFilename + '.jpg';
+            const jpegPath = path.join('./uploads', jpegFilename);
+            
+            // 转换文件，传递 HEIF 标识
+            const conversionSuccess = await convertHeifToJpeg(originalPath, jpegPath, true);
+            
+            if (conversionSuccess) {
+                // 删除原始文件
+                if (fs.existsSync(originalPath)) {
+                    fs.unlinkSync(originalPath);
+                }
+                
+                finalFilename = jpegFilename;
+                finalPath = jpegPath;
+                
+                console.log(`HEIF 转换成功: ${jpegFilename}`);
+            } else {
+                // 转换失败，删除原始文件
+                if (fs.existsSync(originalPath)) {
+                    fs.unlinkSync(originalPath);
+                }
+                return res.status(500).json({ error: 'HEIF 文件转换失败' });
+            }
+        } else {
+            // 对于其他格式的图片，进行优化
+            const optimizedFilename = req.file.filename.replace(/\.(png|gif|bmp|webp)$/i, '.jpg');
+            if (optimizedFilename !== req.file.filename) {
+                const optimizedPath = path.join('./uploads', optimizedFilename);
+                
+                const optimizationSuccess = await convertHeifToJpeg(originalPath, optimizedPath);
+                
+                if (optimizationSuccess) {
+                    // 删除原始文件
+                    if (fs.existsSync(originalPath)) {
+                        fs.unlinkSync(originalPath);
+                    }
+                    
+                    finalFilename = optimizedFilename;
+                    finalPath = optimizedPath;
+                    
+                    console.log(`图片优化成功: ${optimizedFilename}`);
+                }
+            }
+        }
+
         // 创建新的画作记录
         const newPainting = {
             id: uuidv4(),
-            filename: req.file.filename,
+            filename: finalFilename,
             originalName: req.file.originalname,
-            imageUrl: `/uploads/${req.file.filename}`,
+            imageUrl: `/uploads/${finalFilename}`,
             date: new Date().toISOString(),
-            size: req.file.size
+            size: fs.statSync(finalPath).size
         };
 
         // 读取现有数据
@@ -125,7 +267,9 @@ app.post('/api/upload', upload.single('painting'), (req, res) => {
             });
         } else {
             // 如果保存失败，删除已上传的文件
-            fs.unlinkSync(req.file.path);
+            if (fs.existsSync(finalPath)) {
+                fs.unlinkSync(finalPath);
+            }
             res.status(500).json({ error: '保存画作信息失败' });
         }
 

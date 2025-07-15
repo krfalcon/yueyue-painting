@@ -27,13 +27,29 @@ function handleFilePreview(event) {
     const file = event.target.files[0];
     const preview = document.getElementById('preview-image');
     
-    if (file && file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            preview.src = e.target.result;
-            preview.classList.remove('hidden');
-        };
-        reader.readAsDataURL(file);
+    if (file) {
+        const fileName = file.name.toLowerCase();
+        const isValidImage = file.type.startsWith('image/') || 
+                            fileName.endsWith('.heic') || 
+                            fileName.endsWith('.heif');
+        
+        if (isValidImage) {
+            // 对于 HEIF 文件，显示一个占位图像
+            if (fileName.endsWith('.heic') || fileName.endsWith('.heif')) {
+                preview.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgdmlld0JveD0iMCAwIDIwMCAxNTAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIyMDAiIGhlaWdodD0iMTUwIiBmaWxsPSIjRkZCNkMxIi8+Cjx0ZXh0IHg9IjEwMCIgeT0iNzUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIwLjNlbSIgZmlsbD0iI0ZGNjlCNCIgZm9udC1mYW1pbHk9IkNvbWljIE5ldWUsIGN1cnNpdmUiIGZvbnQtc2l6ZT0iMTZweCI+8J+TuCBIRUlDIOWbvueJhzwvdGV4dD4KPC9zdmc+';
+                preview.classList.remove('hidden');
+            } else {
+                // 对于其他图片格式，正常预览
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    preview.src = e.target.result;
+                    preview.classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            }
+        } else {
+            preview.classList.add('hidden');
+        }
     } else {
         preview.classList.add('hidden');
     }
@@ -128,15 +144,21 @@ async function handleUpload(event) {
         return;
     }
     
-    // 验证文件大小 (限制为 5MB)
-    if (fileInput.files[0].size > 5 * 1024 * 1024) {
-        showMessage('图片文件不能超过 5MB', 'error');
+    // 验证文件大小 (限制为 10MB)
+    if (fileInput.files[0].size > 10 * 1024 * 1024) {
+        showMessage('图片文件不能超过 10MB', 'error');
         return;
     }
     
-    // 验证文件类型
-    if (!fileInput.files[0].type.startsWith('image/')) {
-        showMessage('请选择有效的图片文件', 'error');
+    // 验证文件类型 (支持标准图片格式和 HEIF)
+    const file = fileInput.files[0];
+    const fileName = file.name.toLowerCase();
+    const isValidImage = file.type.startsWith('image/') || 
+                        fileName.endsWith('.heic') || 
+                        fileName.endsWith('.heif');
+    
+    if (!isValidImage) {
+        showMessage('请选择有效的图片文件（支持 JPG、PNG、HEIC 格式）', 'error');
         return;
     }
     
