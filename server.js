@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
-const heicConvert = require('heic-convert');
+const { decode } = require('heic-decode');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -103,39 +103,40 @@ const upload = multer({
     }
 });
 
-// HEIF 转换为 JPEG 的函数
-async function convertHeifToJpeg(inputPath, outputPath, isHeifFile = false) {
+// 图片转换和优化函数
+async function convertAndOptimizeImage(inputPath, outputPath, isHeifFile = false) {
     try {
-        const inputBuffer = fs.readFileSync(inputPath);
+        console.log(`处理图片: ${path.basename(inputPath)}, HEIF: ${isHeifFile}`);
         
-        // 检测文件是否为 HEIF 格式
-        const ext = path.extname(inputPath).toLowerCase();
-        if (isHeifFile || ext === '.heic' || ext === '.heif') {
-            console.log(`转换 HEIF 文件: ${path.basename(inputPath)}`);
+        if (isHeifFile) {
+            // 对于HEIC文件，使用heic-decode库进行转换
+            console.log('使用 heic-decode 转换 HEIC 文件...');
             
-            // 使用 heic-convert 转换为 JPEG
-            const outputBuffer = await heicConvert({
-                buffer: inputBuffer,
-                format: 'JPEG',
-                quality: 0.9
-            });
+            const inputBuffer = fs.readFileSync(inputPath);
+            const { data, width, height } = await decode({ buffer: inputBuffer });
             
-            // 使用 Sharp 进一步优化和调整大小
-            await sharp(outputBuffer)
-                .jpeg({ 
-                    quality: 85,
-                    progressive: true 
-                })
-                .resize(2048, 2048, { 
-                    fit: 'inside',
-                    withoutEnlargement: true 
-                })
-                .toFile(outputPath);
-                
-            console.log(`HEIF 转换完成: ${path.basename(outputPath)}`);
+            // 将解码后的数据转换为Sharp可处理的格式
+            await sharp(Buffer.from(data), {
+                raw: {
+                    width,
+                    height,
+                    channels: 4 // RGBA
+                }
+            })
+            .jpeg({ 
+                quality: 85,
+                progressive: true 
+            })
+            .resize(2048, 2048, { 
+                fit: 'inside',
+                withoutEnlargement: true 
+            })
+            .toFile(outputPath);
+            
+            console.log(`HEIC 转换完成: ${path.basename(outputPath)}`);
             return true;
         } else {
-            // 对于其他格式，使用 Sharp 优化
+            // 对于其他格式，直接使用Sharp处理
             await sharp(inputPath)
                 .jpeg({ 
                     quality: 85,
@@ -147,11 +148,66 @@ async function convertHeifToJpeg(inputPath, outputPath, isHeifFile = false) {
                 })
                 .toFile(outputPath);
                 
-            console.log(`图片优化完成: ${path.basename(outputPath)}`);
+            console.log(`图片处理完成: ${path.basename(outputPath)}`);
             return true;
         }
     } catch (error) {
-        console.error('图片转换出错:', error);
+        console.error('图片处理出错:', error);
+        console.error('错误详情:', error.message);
+        
+        // 如果heic-decode失败，尝试使用系统工具
+        if (isHeifFile) {
+            console.log('heic-decode 失败，尝试使用系统工具转换 HEIF...');
+            return await convertHeifWithSystemTool(inputPath, outputPath);
+        }
+        
+        return false;
+    }
+}
+
+// 使用系统工具转换 HEIF（备用方案）
+async function convertHeifWithSystemTool(inputPath, outputPath) {
+    try {
+        const { exec } = require('child_process');
+        const util = require('util');
+        const execPromise = util.promisify(exec);
+        
+        // 检查是否有 sips 命令（macOS 系统工具）
+        try {
+            await execPromise('which sips');
+            console.log('使用 macOS sips 工具转换 HEIF...');
+            
+            // 使用 sips 转换 HEIF 到 JPEG
+            await execPromise(`sips -s format jpeg "${inputPath}" --out "${outputPath}"`);
+            
+            // 使用 Sharp 进一步优化
+            const tempPath = outputPath + '.temp';
+            await sharp(outputPath)
+                .jpeg({ 
+                    quality: 85,
+                    progressive: true 
+                })
+                .resize(2048, 2048, { 
+                    fit: 'inside',
+                    withoutEnlargement: true 
+                })
+                .toFile(tempPath);
+                
+            // 替换原文件
+            fs.renameSync(tempPath, outputPath);
+            
+            console.log('HEIF 转换成功（使用系统工具）');
+            return true;
+        } catch (sipsError) {
+            console.log('sips 工具不可用，尝试其他方法...');
+        }
+        
+        // 如果没有系统工具，返回错误
+        console.error('无法转换 HEIF 文件：缺少必要的转换工具');
+        return false;
+        
+    } catch (error) {
+        console.error('系统工具转换失败:', error);
         return false;
     }
 }
@@ -201,7 +257,7 @@ app.post('/api/upload', upload.single('painting'), async (req, res) => {
             const jpegPath = path.join('./uploads', jpegFilename);
             
             // 转换文件，传递 HEIF 标识
-            const conversionSuccess = await convertHeifToJpeg(originalPath, jpegPath, true);
+            const conversionSuccess = await convertAndOptimizeImage(originalPath, jpegPath, true);
             
             if (conversionSuccess) {
                 // 删除原始文件
@@ -226,7 +282,7 @@ app.post('/api/upload', upload.single('painting'), async (req, res) => {
             if (optimizedFilename !== req.file.filename) {
                 const optimizedPath = path.join('./uploads', optimizedFilename);
                 
-                const optimizationSuccess = await convertHeifToJpeg(originalPath, optimizedPath);
+                const optimizationSuccess = await convertAndOptimizeImage(originalPath, optimizedPath);
                 
                 if (optimizationSuccess) {
                     // 删除原始文件
